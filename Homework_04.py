@@ -1,9 +1,13 @@
 #from nltk.corpus import PlaintextCorpusReader
 import re
-import pprint
 import nltk
 import os
+import numpy as np
+from pathlib import Path
+from progress.bar import ChargingBar as Bar
+import pickle
 from bs4 import BeautifulSoup
+from nltk.corpus import cess_esp as cess
 from nltk.corpus import stopwords
 '''
 1. Lectura de texto como cadena
@@ -50,11 +54,10 @@ de tiempo. Por sí mismas tienen pequeño o ningún significado. Usualmente se e
 el procesamiento del texto para tratar de obtener el máximo significado y contexto
 
 Normalización de texto:
-- Normalización de texto:
+- Normalización de texto
+- Eliminar STOPWORDS
 - Eliminar las etiquetas HTML
 - Eliminar todo caracter que no es letra
-- Eliminar STOPWORDS
-- Obtener vocabulario
 -> La frecuencia representa la semántica de la forma más precisa posible, ya sea en pasado o 
 en presente (stemming)
 - Lematización, lema es la forma de la palabra que aparece en el diccionario
@@ -125,7 +128,6 @@ def clean_tokens(text):
 		for char in token:
 			if re.match(r'[a-záéíóúüñ]', char):		t.append(char)
 		whole = ''.join(t)
-		#if (whole := ''.join(t)) != '':
 		if whole != '':
 			clean_tokens_arr.append(whole)
 
@@ -137,7 +139,6 @@ def remove_stopwords(text):
 	text_without_stopwords = [token for token in text if token not in stpwords]
 	print("Text without stopwords count: {0}".format(len(text_without_stopwords)))
 	return text_without_stopwords
-
 
 def get_unique(text):
 	result = sorted(set(text))
@@ -153,34 +154,113 @@ def save_text(text, filename):
 def get_window(vocabulary, normalized, size=4):
 	index = 0
 	vocabulary_window_list = {}
+	total = len(normalized)
+	bar = Bar('Building vocabulary windows', max=total, suffix='%(percent)d%% %(eta)ds left')
 	for word in normalized:
 		for vocabulary_item in vocabulary:
 			if vocabulary_item not in vocabulary_window_list:
 				vocabulary_window_list[vocabulary_item] = []
 			if vocabulary_item==word:
-				start = 0 if (index-size <0 ) else index-size	
-				vocabulary_window_list[vocabulary_item].append(normalized[start:index+size+1])
+				start = 0 if index-size<0 else index-size
+				vocabulary_window_list[vocabulary_item].extend(normalized[start:index+size+1])
 		index+=1
+		bar.next()
+	bar.finish()
+	print("Vocabulary windows: Done.")
 	return vocabulary_window_list
+
 	
+def save_data(data, filename):
+	with open(filename, 'wb') as handle:	handle.write(pickle.dumps(data))
+
+def retrieve_data(filename):
+	with open(filename, 'rb') as handle:	return pickle.loads(handle.read())
+
+def vectorize(windows, vocabulary):
+	vectorized = {}
+	total = len(windows)
+	bar = Bar('Building vectors', max=total, suffix='%(percent)d%% %(eta)ds left')
+	for word in windows:
+		words_window = windows[word]
+		vectorized[word] = []
+		for vocabulary_word in vocabulary:
+			vectorized[word].append(words_window.count(vocabulary_word))
+		vectorized[word] = np.array(vectorized[word])
+		bar.next()
+	bar.finish()
+	print("Vectorize: Done")
+	return vectorized
+
+def generate_cosines(vectors, vect_against):
+	cosines = {}
+	for vector in vectors:
+		it_vector = vectors[vector]
+		cosine = np.dot(it_vector, vect_against)/\
+			(np.sqrt(np.sum(it_vector ** 2)) *  np.sqrt(np.sum(vect_against ** 2)))
+		cosines[vector] = cosine
+	import operator
+	cosines = sorted(cosines.items(), key = operator.itemgetter(1), reverse = True)
+	return cosines
+
+def save_cosines_into_file(vectors, word):
+	cosines = generate_cosines(vectors, vectors[word])
+	#cosines = cosines.items()
+	with open("cosines.txt", "w") as handle:
+		bar = Bar(f'Writing cosines for [{word}]', max=len(cosines), suffix='%(percent)d%% %(eta)ds left')
+		for cosine in cosines:
+			string = "{}\t{}\n".format(cosine[0],cosine[1])
+			handle.write(string)
+			bar.next()
+		bar.finish()
+	print("Cosine file has been written.")
+	#print(cosines[:10])			
+	return cosines
+
+def build_combined_tagger():
+	print("Building tagger")
+	default_tagger = nltk.DefaultTagger('V')
+	pattern = [
+	(r'.*os$', 'PM'),                  # adverbs
+	(r'.*as$','PF'),
+	(r'.*o$','SM'),
+	(r'.*a$','SF')
+	]
+	cess_sents = cess.tagged_sents()
+	regex_tagger = nltk.RegexpTagger(pattern, backoff=default_tagger)
+	tagger = nltk.UnigramTagger(cess_sents, backoff=regex_tagger)
+	return tagger
+	
+
 if __name__ == '__main__':
-	pp = pprint.PrettyPrinter(indent=4)
+	nltk.data.path.append('/sdcard/nltk_data/nltk_data')
 	curr_path = os.path.dirname(os.path.realpath(__file__))
-	nltk.data.path.append(curr_path + '/nltk_data')
-	path = curr_path+'/e961024.htm'
+	path = curr_path+'/Corpus/e961024.htm'
 	clean_text = remove_html_tokens(path)
 	clean_text = clean_tokens(clean_text)
 	normalized = remove_stopwords(clean_text)
 	vocabulary = get_unique(normalized)
+	if not Path('windows.pkl').is_file():
+		windows = get_window(vocabulary,normalized)
+		save_data(windows, "windows.pkl")
+	else:
+		windows = retrieve_data("windows.pkl")
+		print("Window file: OK")
+
+	if not Path('vectors.pkl').is_file():
+		vectors = vectorize(windows,vocabulary)
+		save_data(vectors, "vectors.pkl")
+	else:
+		vectors = retrieve_data("vectors.pkl")
+		print("Vector file: OK")
 	
-	#normalized = ['5', '1', '2', '3', '4', '5', '6', '7', '8', '9','5', '50']
-	#vocabulary = ['5']
+	if not Path('tagger.pkl').is_file():
+		tagger = build_combined_tagger()
+		save_data(tagger, "tagger.pkl")
+	else:
+		tagger = retrieve_data("tagger.pkl")
+		print("Tagger file: OK")
+	cosines = save_cosines_into_file(vectors, "grande")
+	tags = tagger.tag(vocabulary)
+	print(cosines[:10])
+	print()
 
-
-	contextlist = get_window(vocabulary,normalized)
-	pp.pprint(contextlist)
-	#index = 0
-	#for item in contextlist:
-#		if index < 51:
-#			pp.pprint(item, contextlist[item])
-#			index+=1
