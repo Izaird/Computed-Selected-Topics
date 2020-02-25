@@ -1,15 +1,18 @@
 #from nltk.corpus import PlaintextCorpusReader
+import pickle
 import re
+import gzip
 import nltk
 import os
 import numpy as np
+from math import log
+from math import e as eulerval
 from pathlib import Path
 from progress.bar import ChargingBar as Bar
-import pickle
 from bs4 import BeautifulSoup
 from nltk.corpus import cess_esp as cess
 from nltk.corpus import stopwords
-from nltk.stem.snowball import SnowballStemmer
+from nltk.stem.snowball import SpanishStemmer
 
 '''
 1. Lectura de texto como cadena
@@ -204,17 +207,23 @@ def generate_cosines(vectors, vect_against):
 	cosines = sorted(cosines.items(), key = operator.itemgetter(1), reverse = True)
 	return cosines
 
-def save_cosines_into_file(vectors, word):
+def save_cosines_into_file(vectors, word, filename):
+	if word not in vectors:
+		#Try to stem the word if it wasn't found as is in the vector argument
+		stemmer = SpanishStemmer()
+		word = stemmer.stem(word)
+		if word not in vectors:
+			#If it wasn't found, return and raise an exception
+			raise KeyError("Not even the stemmed word was found in your vectors. Exiting...")	
 	cosines = generate_cosines(vectors, vectors[word])
 	#cosines = cosines.items()
-	with open("cosines.txt", "w") as handle:
-		bar = Bar(f'Writing cosines for [{word}]', max=len(cosines), suffix='%(percent)d%% %(eta)ds left')
+	with open(filename, "w") as handle:
+		bar = Bar(f'{filename}', max=len(cosines), suffix='%(percent)d%% %(eta)ds', width=20)
 		for cosine in cosines:
 			string = "{}\t{}\n".format(cosine[0],cosine[1])
 			handle.write(string)
 			bar.next()
 		bar.finish()
-	print("Cosine file has been written.")
 	#print(cosines[:10])			
 	return cosines
 
@@ -254,6 +263,30 @@ def v_tf(frequencies, vocabulary):
 		v_tf.update({contex : contex_tf})
 	return v_tf
 
+def tfidf(tf,idf):
+	tfidf = {}
+	bar = Bar(f'Bulding tfidf', max=len(tf), suffix='%(percent)d%% %(eta)ds', width=20)
+	for vect in tf:
+		this_vector = tf[vect]
+		result = np.multiply(this_vector, idf)
+		tfidf[vect] = result
+		bar.next()
+	bar.finish()
+	return tfidf
+
+def v_idf(vectors):
+	total = len(vectors)
+	idf = [0 for index in range(total)]
+	bar = Bar(f'Building idfV', max=total, suffix='%(percent)d%% %(eta)ds', width=20)
+	for vect in vectors:
+		this_vector = vectors[vect]
+		bar.next()
+		for index, component in enumerate(this_vector):
+			if component:
+				idf[index] += 1
+	bar.finish()
+	return np.array([log((total+1)/item,eulerval) for item in idf])
+
 def stem_with_snowball(normalized):
 	total = len(normalized)
 	spanishStemmer=SnowballStemmer("spanish")
@@ -264,6 +297,11 @@ def stem_with_snowball(normalized):
 		bar.next()
 	bar.finish()	
 	return stems
+
+
+def idf(frequencies, size_vocabulary):
+
+	return v_idf
 
 if __name__ == '__main__':
 	nltk.data.path.append('/sdcard/nltk_data/nltk_data')
@@ -332,9 +370,9 @@ if __name__ == '__main__':
 		v_tf_sb = retrieve_data("v_tf_sb.pkl")
 		print("v_tf_sb file: OK")
 	# v_tf_sb = v_tf(vectors_sb ,vocabulary_sb)
+	v_idf_sb = v_idf(vectors_sb)
+	v_tfidf_sb = tfidf(v_tf_sb, v_idf_sb)
 
-	cosines = save_cosines_into_file(vectors, "grande")
-	tags = tagger.tag(vocabulary)
-	print(cosines[:10])
-	print()
-
+	save_cosines_into_file(vectors_sb, "grande", "cosines1.txt")
+	save_cosines_into_file(v_probab_sb, "grande", "cosines2.txt")
+	save_cosines_into_file(v_tfidf_sb, "grande", "cosines3.txt")
