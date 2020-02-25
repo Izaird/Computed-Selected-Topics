@@ -9,6 +9,8 @@ import pickle
 from bs4 import BeautifulSoup
 from nltk.corpus import cess_esp as cess
 from nltk.corpus import stopwords
+from nltk.stem.snowball import SnowballStemmer
+
 '''
 1. Lectura de texto como cadena
 2. Limpiar de HTML
@@ -229,7 +231,39 @@ def build_combined_tagger():
 	regex_tagger = nltk.RegexpTagger(pattern, backoff=default_tagger)
 	tagger = nltk.UnigramTagger(cess_sents, backoff=regex_tagger)
 	return tagger
-	
+
+def probab(frequencies, vocabulary):
+	v_probab = {}
+	res = list(frequencies.keys())[0] 
+	contex_prob = np.empty_like(frequencies.get(res))
+	v_probab = {}
+	for contex in frequencies:
+		contex_prob = frequencies.get(contex) / np.sum(frequencies.get(contex))
+		v_probab.update({contex : contex_prob})
+	return v_probab
+
+
+def v_tf(frequencies, vocabulary):
+	k = 1.2
+	v_tf = {}
+	res = list(frequencies.keys())[0] 
+	contex_tf = np.empty_like(frequencies.get(res))
+	v_tf = {}
+	for contex in frequencies:
+		contex_tf = (((k+1) * frequencies.get(contex)) /  (frequencies.get(contex) + k))
+		v_tf.update({contex : contex_tf})
+	return v_tf
+
+def stem_with_snowball(normalized):
+	total = len(normalized)
+	spanishStemmer=SnowballStemmer("spanish")
+	stems = []
+	bar = Bar('Building stemmers', max=total, suffix='%(percent)d%% %(eta)ds left')
+	for word in normalized:
+		stems.append(spanishStemmer.stem(word))
+		bar.next()
+	bar.finish()	
+	return stems
 
 if __name__ == '__main__':
 	nltk.data.path.append('/sdcard/nltk_data/nltk_data')
@@ -259,6 +293,46 @@ if __name__ == '__main__':
 	else:
 		tagger = retrieve_data("tagger.pkl")
 		print("Tagger file: OK")
+
+	if not Path('snowball.pkl').is_file():
+		stems = stem_with_snowball(normalized)
+		save_data(stems, "snowball.pkl")
+	else:
+		stems = retrieve_data("snowball.pkl")
+		print("Stems file: OK")
+
+	#Using sb prefix to refer to snowball
+	vocabulary_sb =  get_unique(stems)
+
+	if not Path('windows_sb.pkl').is_file():
+		windows_sb = get_window(vocabulary_sb,stems)
+		save_data(windows_sb, "windows_sb.pkl")
+	else:
+		windows_sb = retrieve_data("windows_sb.pkl")
+		print("Window_sb file: OK")
+
+	if not Path('vectors_sb.pkl').is_file():
+		vectors_sb = vectorize(windows_sb,vocabulary_sb)
+		save_data(vectors_sb, "vectors_sb.pkl")
+	else:
+		vectors_sb = retrieve_data("vectors_sb.pkl")
+		print("Vector_sb file: OK")
+
+	if not Path('v_probab_sb.pkl').is_file():
+		v_probab_sb = probab(vectors_sb ,vocabulary_sb)
+		save_data(v_probab_sb, "v_probab_sb.pkl")
+	else:
+		v_probab_sb = retrieve_data("v_probab_sb.pkl")
+		print("v_probab_sb file: OK")
+
+	if not Path('v_tf_sb.pkl').is_file():
+		v_tf_sb = v_tf(vectors_sb ,vocabulary_sb)
+		save_data(v_tf_sb, "v_tf_sb.pkl")
+	else:
+		v_tf_sb = retrieve_data("v_tf_sb.pkl")
+		print("v_tf_sb file: OK")
+	# v_tf_sb = v_tf(vectors_sb ,vocabulary_sb)
+
 	cosines = save_cosines_into_file(vectors, "grande")
 	tags = tagger.tag(vocabulary)
 	print(cosines[:10])
